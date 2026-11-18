@@ -1,0 +1,9 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Gift Card Discounts - Interactive Prototype</title><link rel="stylesheet" href="preview.css"></head><body>
+<main><p class="eyebrow">SAFARI EXTENSION PROTOTYPE</p><h1>A quiet reminder.<br>A cheaper gift card.</h1>
+<p class="intro">This local preview uses the same hostname matcher and notification component as the extension. All offers below are synthetic test data.</p>
+<form id="visit-form"><label for="hostname">Simulate visiting a retailer</label><div class="controls"><input id="hostname" value="dominos.com" spellcheck="false" autocapitalize="off"><button type="submit">Visit</button></div></form>
+<div class="examples"><button type="button" data-host="order.dominos.com">Subdomain</button><button type="button" data-host="starbucks.com">Starbucks</button><button type="button" data-host="lowes.com">No inventory</button><button type="button" data-host="notdominos.com">Unrelated domain</button></div>
+<section class="status-panel"><h2>What happened</h2><p id="result" role="status">Loading snapshot...</p><p id="counts"></p></section>
+<div class="controls"><button id="new-session" type="button">New simulated session</button><button id="clear-preferences" type="button">Restore hidden retailers</button></div>
+<p class="footnote">Visit the same retailer twice: the pill appears only once. Dismiss with its close button. Expand it for discount details, snooze, or permanent suppression. A new simulated session does not undo permanent suppression.</p>
+</main><script src="core.js"></script><script src="ui.js"></script><script src="preview.js"></script></body></html>

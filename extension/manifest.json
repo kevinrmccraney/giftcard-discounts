@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "Gift Card Discounts",
+  "version": "0.1.0",
+  "description": "Local retailer matching against a cached gift-card discount snapshot. Prototype; demo off by default.",
+  "permissions": ["storage"],
+  "host_permissions": ["https://*/*"],
+  "background": {"service_worker": "background.js"},
+  "content_scripts": [{"matches": ["https://*/*"], "js": ["ui.js", "content.js"], "all_frames": false, "run_at": "document_idle"}],
+  "action": {"default_title": "Gift Card Discounts", "default_popup": "popup.html", "default_icon": {"32": "icon-32.png"}},
+  "icons": {"32": "icon-32.png", "128": "icon-128.png"},
+  "browser_specific_settings": {"safari": {"strict_min_version": "16.4"}},
+  "content_security_policy": {"extension_pages": "script-src 'self'; object-src 'none'"}
+}

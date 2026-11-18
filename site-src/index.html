@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Gift Card Discounts feed</title>
+  <style>
+    :root { color-scheme: light dark; font-family: ui-sans-serif, system-ui, sans-serif; }
+    body { max-width: 40rem; margin: 3rem auto; padding: 0 1.25rem; line-height: 1.45; }
+    code, a { word-break: break-all; }
+    .note { opacity: 0.8; font-size: 0.95rem; }
+  </style>
+</head>
+<body>
+  <h1>Gift Card Discounts</h1>
+  <p>Personal static snapshot for the Safari extension. Percentages are advertised GCX maxima <strong>before fees</strong>, not checkout quotes or guaranteed inventory.</p>
+  <p>Feed URL (paste into the extension):<br>
+    <a id="feed" href="./snapshot.json"><code>./snapshot.json</code></a>
+  </p>
+  <p class="note">This page is rebuilt by GitHub Actions. If collection fails, the previous Pages deployment is left alone.</p>
+  <script>
+    const link = document.getElementById('feed');
+    link.href = new URL('snapshot.json', location.href).href;
+    link.querySelector('code').textContent = link.href;
+  </script>
+</body>
+</html>

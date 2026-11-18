@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "providers": {
+    "gcx": {"name": "GCX", "allowed_offer_hosts": ["gcx.app", "gcx.raise.com"]}
+  },
+  "retailers": [
+    {"id": "dominos", "name": "Domino's", "gcx_path": "/buy-domino-s-gift-cards", "domains": [{"host": "dominos.com", "include_subdomains": true}]},
+    {"id": "starbucks", "name": "Starbucks", "gcx_path": "/buy-starbucks-gift-cards", "domains": [{"host": "starbucks.com", "include_subdomains": true}]},
+    {"id": "lowes", "name": "Lowe's", "gcx_path": "/buy-lowe-s-gift-cards", "domains": [{"host": "lowes.com", "include_subdomains": true}]}
+  ]
+}

@@ -1,0 +1,135 @@
+{
+  "schema_version": 1,
+  "providers": {
+    "gcx": {
+      "name": "GCX",
+      "allowed_offer_hosts": [
+        "gcx.app",
+        "gcx.raise.com"
+      ]
+    }
+  },
+  "retailers": [
+    {
+      "id": "dominos",
+      "name": "Domino's",
+      "domains": [
+        {
+          "host": "dominos.com",
+          "include_subdomains": true
+        }
+      ],
+      "gcx_path": "/buy-domino-s-gift-cards"
+    },
+    {
+      "id": "starbucks",
+      "name": "Starbucks",
+      "domains": [
+        {
+          "host": "starbucks.com",
+          "include_subdomains": true
+        }
+      ],
+      "gcx_path": "/buy-starbucks-gift-cards"
+    },
+    {
+      "id": "lowes",
+      "name": "Lowe's",
+      "domains": [
+        {
+          "host": "lowes.com",
+          "include_subdomains": true
+        }
+      ],
+      "gcx_path": "/buy-lowe-s-gift-cards"
+    },
+    {
+      "id": "walmart",
+      "name": "Walmart",
+      "domains": [
+        {
+          "host": "walmart.com",
+          "include_subdomains": true
+        }
+      ],
+      "gcx_path": "/buy-walmart-gift-cards"
+    },
+    {
+      "id": "bestbuy",
+      "name": "Best Buy",
+      "domains": [
+        {
+          "host": "bestbuy.com",
+          "include_subdomains": true
+        }
+      ],
+      "gcx_path": "/buy-best-buy-gift-cards"
+    },
+    {
+      "id": "homedepot",
+      "name": "The Home Depot",
+      "domains": [
+        {
+          "host": "homedepot.com",
+          "include_subdomains": true
+        }
+      ],
+      "gcx_path": "/buy-the-home-depot-gift-cards"
+    },
+    {
+      "id": "macys",
+      "name": "Macy's",
+      "domains": [
+        {
+          "host": "macys.com",
+          "include_subdomains": true
+        }
+      ],
+      "gcx_path": "/buy-macy-s-gift-cards"
+    },
+    {
+      "id": "airbnb",
+      "name": "Airbnb",
+      "domains": [
+        {
+          "host": "airbnb.com",
+          "include_subdomains": true
+        }
+      ],
+      "gcx_path": "/buy-airbnb-gift-cards"
+    },
+    {
+      "id": "doordash",
+      "name": "DoorDash",
+      "domains": [
+        {
+          "host": "doordash.com",
+          "include_subdomains": true
+        }
+      ],
+      "gcx_path": "/buy-doordash-gift-cards"
+    },
+    {
+      "id": "chipotle",
+      "name": "Chipotle",
+      "domains": [
+        {
+          "host": "chipotle.com",
+          "include_subdomains": true
+        }
+      ],
+      "gcx_path": "/buy-chipotle-gift-cards"
+    },
+    {
+      "id": "ulta",
+      "name": "Ulta Beauty",
+      "domains": [
+        {
+          "host": "ulta.com",
+          "include_subdomains": true
+        }
+      ],
+      "gcx_path": "/buy-ulta-beauty-gift-cards"
+    }
+  ]
+}

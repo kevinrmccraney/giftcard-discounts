@@ -1,0 +1,804 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Transform": "AWS::Serverless-2016-10-31",
+  "Description": "Daily bounded GCX catalog collection, immutable history and private snapshot distribution. Schedule starts disabled.",
+  "Parameters": {
+    "OpsEmail": {
+      "Type": "String",
+      "Description": "Email for alarms and budget notifications; SNS confirmation required.",
+      "AllowedPattern": "[^ @]+@[^ @]+\\.[^ @]+"
+    },
+    "EnableSchedule": {
+      "Type": "String",
+      "Default": "false",
+      "AllowedValues": [
+        "false",
+        "true"
+      ]
+    },
+    "Schedule": {
+      "Type": "String",
+      "Default": "rate(1 day)"
+    },
+    "MaxPages": {
+      "Type": "Number",
+      "Default": 20,
+      "MinValue": 1,
+      "MaxValue": 20
+    },
+    "RequestBudget": {
+      "Type": "Number",
+      "Default": 24,
+      "MinValue": 1,
+      "MaxValue": 24
+    },
+    "MonthlyBudgetUSD": {
+      "Type": "Number",
+      "Default": 10,
+      "MinValue": 1
+    },
+    "GitHubOidcProviderArn": {
+      "Type": "String",
+      "Default": ""
+    },
+    "GitHubRepository": {
+      "Type": "String",
+      "Default": "",
+      "Description": "Optional owner/repository; use a protected production environment."
+    },
+    "DeploymentExecutionRoleArn": {
+      "Type": "String",
+      "Default": ""
+    },
+    "DeploymentArtifactBucketArn": {
+      "Type": "String",
+      "Default": ""
+    }
+  },
+  "Conditions": {
+    "GitHubDeploymentConfigured": {
+      "Fn::And": [
+        {
+          "Fn::Not": [
+            {
+              "Fn::Equals": [
+                {
+                  "Ref": "GitHubOidcProviderArn"
+                },
+                ""
+              ]
+            }
+          ]
+        },
+        {
+          "Fn::Not": [
+            {
+              "Fn::Equals": [
+                {
+                  "Ref": "GitHubRepository"
+                },
+                ""
+              ]
+            }
+          ]
+        },
+        {
+          "Fn::Not": [
+            {
+              "Fn::Equals": [
+                {
+                  "Ref": "DeploymentExecutionRoleArn"
+                },
+                ""
+              ]
+            }
+          ]
+        },
+        {
+          "Fn::Not": [
+            {
+              "Fn::Equals": [
+                {
+                  "Ref": "DeploymentArtifactBucketArn"
+                },
+                ""
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "ScheduleEnabled": {
+      "Fn::Equals": [
+        {
+          "Ref": "EnableSchedule"
+        },
+        "true"
+      ]
+    }
+  },
+  "Resources": {
+    "History": {
+      "Type": "AWS::DynamoDB::Table",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "BillingMode": "PAY_PER_REQUEST",
+        "AttributeDefinitions": [
+          {
+            "AttributeName": "pk",
+            "AttributeType": "S"
+          },
+          {
+            "AttributeName": "sk",
+            "AttributeType": "S"
+          }
+        ],
+        "KeySchema": [
+          {
+            "AttributeName": "pk",
+            "KeyType": "HASH"
+          },
+          {
+            "AttributeName": "sk",
+            "KeyType": "RANGE"
+          }
+        ],
+        "PointInTimeRecoverySpecification": {
+          "PointInTimeRecoveryEnabled": true
+        },
+        "SSESpecification": {
+          "SSEEnabled": true
+        }
+      }
+    },
+    "Snapshots": {
+      "Type": "AWS::S3::Bucket",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "PublicAccessBlockConfiguration": {
+          "BlockPublicAcls": true,
+          "BlockPublicPolicy": true,
+          "IgnorePublicAcls": true,
+          "RestrictPublicBuckets": true
+        },
+        "OwnershipControls": {
+          "Rules": [
+            {
+              "ObjectOwnership": "BucketOwnerEnforced"
+            }
+          ]
+        },
+        "BucketEncryption": {
+          "ServerSideEncryptionConfiguration": [
+            {
+              "ServerSideEncryptionByDefault": {
+                "SSEAlgorithm": "AES256"
+              }
+            }
+          ]
+        },
+        "VersioningConfiguration": {
+          "Status": "Enabled"
+        },
+        "LifecycleConfiguration": {
+          "Rules": [
+            {
+              "Id": "ExpireOldVersions",
+              "Status": "Enabled",
+              "NoncurrentVersionExpiration": {
+                "NoncurrentDays": 30
+              }
+            }
+          ]
+        }
+      }
+    },
+    "OriginAccess": {
+      "Type": "AWS::CloudFront::OriginAccessControl",
+      "Properties": {
+        "OriginAccessControlConfig": {
+          "Name": {
+            "Fn::Sub": "${AWS::StackName}-snapshots"
+          },
+          "OriginAccessControlOriginType": "s3",
+          "SigningBehavior": "always",
+          "SigningProtocol": "sigv4"
+        }
+      }
+    },
+    "Distribution": {
+      "Type": "AWS::CloudFront::Distribution",
+      "Properties": {
+        "DistributionConfig": {
+          "Enabled": true,
+          "HttpVersion": "http2",
+          "IPV6Enabled": true,
+          "PriceClass": "PriceClass_100",
+          "Origins": [
+            {
+              "Id": "snapshots",
+              "DomainName": {
+                "Fn::GetAtt": [
+                  "Snapshots",
+                  "RegionalDomainName"
+                ]
+              },
+              "OriginAccessControlId": {
+                "Ref": "OriginAccess"
+              },
+              "S3OriginConfig": {
+                "OriginAccessIdentity": ""
+              }
+            }
+          ],
+          "DefaultCacheBehavior": {
+            "TargetOriginId": "snapshots",
+            "ViewerProtocolPolicy": "https-only",
+            "AllowedMethods": [
+              "GET",
+              "HEAD"
+            ],
+            "CachedMethods": [
+              "GET",
+              "HEAD"
+            ],
+            "Compress": true,
+            "CachePolicyId": "658327ea-f89d-4fab-a63d-7e88639e58f6"
+          },
+          "ViewerCertificate": {
+            "CloudFrontDefaultCertificate": true
+          }
+        }
+      }
+    },
+    "BucketPolicy": {
+      "Type": "AWS::S3::BucketPolicy",
+      "Properties": {
+        "Bucket": {
+          "Ref": "Snapshots"
+        },
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "cloudfront.amazonaws.com"
+              },
+              "Action": "s3:GetObject",
+              "Resource": {
+                "Fn::Sub": "${Snapshots.Arn}/production/snapshot.json"
+              },
+              "Condition": {
+                "StringEquals": {
+                  "AWS:SourceArn": {
+                    "Fn::Sub": "arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${Distribution}"
+                  }
+                }
+              }
+            },
+            {
+              "Effect": "Deny",
+              "Principal": "*",
+              "Action": "s3:*",
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "Snapshots",
+                    "Arn"
+                  ]
+                },
+                {
+                  "Fn::Sub": "${Snapshots.Arn}/*"
+                }
+              ],
+              "Condition": {
+                "Bool": {
+                  "aws:SecureTransport": "false"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "Alerts": {
+      "Type": "AWS::SNS::Topic",
+      "Properties": {
+        "Subscription": [
+          {
+            "Protocol": "email",
+            "Endpoint": {
+              "Ref": "OpsEmail"
+            }
+          }
+        ]
+      }
+    },
+    "Failures": {
+      "Type": "AWS::SQS::Queue",
+      "Properties": {
+        "MessageRetentionPeriod": 1209600,
+        "SqsManagedSseEnabled": true
+      }
+    },
+    "CollectorRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "lambda.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "CollectorData",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": "dynamodb:PutItem",
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "History",
+                      "Arn"
+                    ]
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:GetObject",
+                    "s3:PutObject"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "${Snapshots.Arn}/production/snapshot.json"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "s3:ListBucket",
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "Snapshots",
+                      "Arn"
+                    ]
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "logs:CreateLogStream",
+                    "logs:PutLogEvents"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${AWS::StackName}-collector:*"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "sqs:SendMessage",
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "Failures",
+                      "Arn"
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "Collector": {
+      "Type": "AWS::Serverless::Function",
+      "Properties": {
+        "FunctionName": {
+          "Fn::Sub": "${AWS::StackName}-collector"
+        },
+        "CodeUri": "collector.zip",
+        "Handler": "giftcard_tool.aws_runtime.handler",
+        "Runtime": "python3.13",
+        "Architectures": [
+          "arm64"
+        ],
+        "MemorySize": 256,
+        "Timeout": 600,
+        "ReservedConcurrentExecutions": 1,
+        "Role": {
+          "Fn::GetAtt": [
+            "CollectorRole",
+            "Arn"
+          ]
+        },
+        "Environment": {
+          "Variables": {
+            "HISTORY_TABLE": {
+              "Ref": "History"
+            },
+            "SNAPSHOT_BUCKET": {
+              "Ref": "Snapshots"
+            },
+            "STACK_NAME": {
+              "Ref": "AWS::StackName"
+            },
+            "MAX_AGE_HOURS": "48",
+            "GCX_MAX_PAGES": {
+              "Ref": "MaxPages"
+            },
+            "GCX_REQUEST_BUDGET": {
+              "Ref": "RequestBudget"
+            }
+          }
+        },
+        "EventInvokeConfig": {
+          "MaximumEventAgeInSeconds": 3600,
+          "MaximumRetryAttempts": 1,
+          "DestinationConfig": {
+            "OnFailure": {
+              "Type": "SQS",
+              "Destination": {
+                "Fn::GetAtt": [
+                  "Failures",
+                  "Arn"
+                ]
+              }
+            }
+          }
+        },
+        "Events": {
+          "Daily": {
+            "Type": "Schedule",
+            "Properties": {
+              "Schedule": {
+                "Ref": "Schedule"
+              },
+              "Enabled": {
+                "Fn::If": [
+                  "ScheduleEnabled",
+                  true,
+                  false
+                ]
+              },
+              "RetryPolicy": {
+                "MaximumEventAgeInSeconds": 3600,
+                "MaximumRetryAttempts": 1
+              },
+              "DeadLetterConfig": {
+                "Type": "SQS",
+                "Arn": {
+                  "Fn::GetAtt": [
+                    "Failures",
+                    "Arn"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "DependsOn": [
+        "CollectorLogs"
+      ]
+    },
+    "CollectorLogs": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "LogGroupName": {
+          "Fn::Sub": "/aws/lambda/${AWS::StackName}-collector"
+        },
+        "RetentionInDays": 14
+      }
+    },
+    "EventFailurePolicy": {
+      "Type": "AWS::SQS::QueuePolicy",
+      "Properties": {
+        "Queues": [
+          {
+            "Ref": "Failures"
+          }
+        ],
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "events.amazonaws.com"
+              },
+              "Action": "sqs:SendMessage",
+              "Resource": {
+                "Fn::GetAtt": [
+                  "Failures",
+                  "Arn"
+                ]
+              },
+              "Condition": {
+                "ArnEquals": {
+                  "aws:SourceArn": {
+                    "Fn::GetAtt": [
+                      "CollectorDaily",
+                      "Arn"
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "CollectorErrors": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmDescription": "CollectorErrors for gift-card collection; inspect logs without logging source HTML.",
+        "Namespace": "AWS/Lambda",
+        "MetricName": "Errors",
+        "Dimensions": [
+          {
+            "Name": "FunctionName",
+            "Value": {
+              "Ref": "Collector"
+            }
+          }
+        ],
+        "Period": 300,
+        "EvaluationPeriods": 1,
+        "Statistic": "Sum",
+        "Threshold": 0,
+        "ComparisonOperator": "GreaterThanThreshold",
+        "TreatMissingData": "notBreaching",
+        "ActionsEnabled": {
+          "Fn::If": [
+            "ScheduleEnabled",
+            true,
+            false
+          ]
+        },
+        "AlarmActions": [
+          {
+            "Ref": "Alerts"
+          }
+        ]
+      }
+    },
+    "StaleSource": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmDescription": "StaleSource for gift-card collection; inspect logs without logging source HTML.",
+        "Namespace": "GiftCardDiscounts",
+        "MetricName": "Published",
+        "Dimensions": [
+          {
+            "Name": "Stack",
+            "Value": {
+              "Ref": "AWS::StackName"
+            }
+          }
+        ],
+        "Period": 86400,
+        "EvaluationPeriods": 2,
+        "Statistic": "Sum",
+        "Threshold": 1,
+        "ComparisonOperator": "LessThanThreshold",
+        "TreatMissingData": "breaching",
+        "ActionsEnabled": {
+          "Fn::If": [
+            "ScheduleEnabled",
+            true,
+            false
+          ]
+        },
+        "AlarmActions": [
+          {
+            "Ref": "Alerts"
+          }
+        ]
+      }
+    },
+    "DeadLetters": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmDescription": "DeadLetters for gift-card collection; inspect logs without logging source HTML.",
+        "Namespace": "AWS/SQS",
+        "MetricName": "ApproximateNumberOfMessagesVisible",
+        "Dimensions": [
+          {
+            "Name": "QueueName",
+            "Value": {
+              "Fn::GetAtt": [
+                "Failures",
+                "QueueName"
+              ]
+            }
+          }
+        ],
+        "Period": 300,
+        "EvaluationPeriods": 1,
+        "Statistic": "Maximum",
+        "Threshold": 0,
+        "ComparisonOperator": "GreaterThanThreshold",
+        "TreatMissingData": "notBreaching",
+        "ActionsEnabled": {
+          "Fn::If": [
+            "ScheduleEnabled",
+            true,
+            false
+          ]
+        },
+        "AlarmActions": [
+          {
+            "Ref": "Alerts"
+          }
+        ]
+      }
+    },
+    "Budget": {
+      "Type": "AWS::Budgets::Budget",
+      "Properties": {
+        "Budget": {
+          "BudgetName": {
+            "Fn::Sub": "${AWS::StackName}-monthly"
+          },
+          "BudgetLimit": {
+            "Amount": {
+              "Ref": "MonthlyBudgetUSD"
+            },
+            "Unit": "USD"
+          },
+          "TimeUnit": "MONTHLY",
+          "BudgetType": "COST"
+        },
+        "NotificationsWithSubscribers": [
+          {
+            "Notification": {
+              "NotificationType": "ACTUAL",
+              "ComparisonOperator": "GREATER_THAN",
+              "Threshold": 80,
+              "ThresholdType": "PERCENTAGE"
+            },
+            "Subscribers": [
+              {
+                "SubscriptionType": "EMAIL",
+                "Address": {
+                  "Ref": "OpsEmail"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "GitHubDeployRole": {
+      "Type": "AWS::IAM::Role",
+      "Condition": "GitHubDeploymentConfigured",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Federated": {
+                  "Ref": "GitHubOidcProviderArn"
+                }
+              },
+              "Action": "sts:AssumeRoleWithWebIdentity",
+              "Condition": {
+                "StringEquals": {
+                  "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+                  "token.actions.githubusercontent.com:sub": {
+                    "Fn::Sub": "repo:${GitHubRepository}:environment:production"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "DeployOnlyThisStack",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "cloudformation:CreateChangeSet",
+                    "cloudformation:DescribeChangeSet",
+                    "cloudformation:ExecuteChangeSet",
+                    "cloudformation:DeleteChangeSet",
+                    "cloudformation:DescribeStacks",
+                    "cloudformation:DescribeStackEvents"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${AWS::StackName}/*"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "iam:PassRole",
+                  "Resource": {
+                    "Ref": "DeploymentExecutionRoleArn"
+                  },
+                  "Condition": {
+                    "StringEquals": {
+                      "iam:PassedToService": "cloudformation.amazonaws.com"
+                    }
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:GetObject",
+                    "s3:PutObject"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "${DeploymentArtifactBucketArn}/${AWS::StackName}/*"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:GetBucketLocation",
+                    "s3:ListBucket"
+                  ],
+                  "Resource": {
+                    "Ref": "DeploymentArtifactBucketArn"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "cloudformation:GetTemplateSummary",
+                  "Resource": "*"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  },
+  "Outputs": {
+    "SnapshotURL": {
+      "Value": {
+        "Fn::Sub": "https://${Distribution.DomainName}/production/snapshot.json"
+      }
+    },
+    "HistoryTable": {
+      "Value": {
+        "Ref": "History"
+      }
+    },
+    "CollectorFunction": {
+      "Value": {
+        "Ref": "Collector"
+      }
+    },
+    "FailureQueueURL": {
+      "Value": {
+        "Ref": "Failures"
+      }
+    },
+    "GitHubDeployRoleArn": {
+      "Condition": "GitHubDeploymentConfigured",
+      "Value": {
+        "Fn::GetAtt": [
+          "GitHubDeployRole",
+          "Arn"
+        ]
+      }
+    }
+  }
+}

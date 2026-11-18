@@ -1,0 +1,10 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Gift Card Discounts</title><link rel="stylesheet" href="popup.css"></head>
+<body><h1>Gift Card Discounts</h1><p>Browsing stays local.</p><p id="feed-status"></p>
+<form id="settings-form"><label for="snapshot-url">Snapshot URL (HTTPS)</label><input id="snapshot-url" type="url" placeholder="https://your-host/snapshot.json">
+<label class="check"><input id="demo-mode" type="checkbox"> Enable synthetic demo data</label>
+<p class="small">Demo offers are labeled and have no purchase link.</p>
+<button type="submit">Save</button> <button id="refresh" type="button">Refresh dataset</button></form>
+<p id="status" role="status"></p><h2>Hidden retailers</h2><div id="hidden-list"></div>
+<p class="small">Allow website access in Safari to show the pill. Once per retailer per Safari session; quitting Safari starts a new session.</p>
+<script src="popup.js"></script></body></html>

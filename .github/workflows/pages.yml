@@ -1,0 +1,58 @@
+name: Publish snapshot
+
+# Personal feed: collect public GCX advertised maxima and publish snapshot.json
+# to GitHub Pages. No AWS. Fail closed — a bad collect does not replace the site.
+on:
+  schedule:
+    # Once daily (UTC). Change if you want a different cadence.
+    - cron: "17 15 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Collect and publish local snapshot into site/
+        run: bash scripts/build-site.sh
+
+      - name: Reject demo or incomplete snapshots
+        run: |
+          python3 - <<'PY'
+          import json, sys
+          from pathlib import Path
+          snap = json.loads(Path("site/snapshot.json").read_text())
+          if snap.get("demo") is not False:
+              sys.exit("Refusing to publish demo snapshot")
+          if not snap.get("retailers"):
+              sys.exit("Refusing to publish empty retailer map")
+          print("ok", snap.get("generated_at"), "retailers", len(snap["retailers"]))
+          PY
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
