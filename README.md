@@ -54,7 +54,7 @@ python3 -m giftcard_tool import build/live/input.json \
 python3 -m giftcard_tool lookup dominos
 ```
 
-Only reviewed retailer mappings are included. Failures, missing configured retailers, and incomplete pagination prevent a new snapshot. The extension requires an HTTPS snapshot URL, available after cloud deployment; it does not read this local file directly.
+The collector scans all catalog pages within its request/page limits, validates every product, and logs and skips malformed products. The collected batch retains all valid products in `gcx_catalog`; the Pages build also publishes them as `catalog.json`. Extension offers use reviewed retailer/domain mappings. Missing or rewards-only retailers are omitted, never reported as zero inventory; partial mapped coverage is marked `complete: false`. Network/access failures or no valid configured discounts still prevent a new snapshot. The extension requires an HTTPS snapshot URL; it does not read this local file directly.
 
 ## Run the data pipeline
 
@@ -72,7 +72,7 @@ python3 -m giftcard_tool import path/to/provider-batch.json \
 
 The demo writes `build/demo/snapshot.json` and a private local history database. The preview serves only explicitly copied public assets, not the history database or the project directory.
 
-`fixtures/demo-batch.json` documents the input shape. Every configured retailer must occur exactly once, with either `available` or `no_inventory`. An incomplete catalog, failed request, unknown inventory, partial pagination, invalid percentage, or unapproved offer URL prevents publication. A **verified complete** batch containing zero inventory for every retailer may correctly publish an empty snapshot.
+`fixtures/demo-batch.json` documents the input shape. Complete batches include every configured retailer exactly once, with either `available` or `no_inventory`. Explicitly partial batches (`complete: false`) may contain a nonempty subset; unknown retailers, duplicates, invalid percentages, and unapproved offer URLs are rejected. Missing retailers produce no observations. A **verified complete** batch containing zero inventory for every retailer may correctly publish an empty snapshot.
 
 A batch can contain complete listings (`balance`, `price`, optional `quantity`) or explicit summary metrics. Listing averages are weighted by available face value including quantity. A provider-supplied average is labeled `provider_reported`, not claimed to use a verified weighting method. Unknown average/count/value fields remain `null`.
 

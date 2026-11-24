@@ -1,7 +1,7 @@
 """Bounded collection of public GCX advertised discounts; never purchases cards.
 
 Catalog percentages are advertisements, not verified listing inventory or quotes.
-Missing brands and changed markup abort collection instead of publishing zero stock.
+Invalid products are skipped; missing discounts never become zero inventory.
 """
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ import argparse
 from datetime import datetime
 from html.parser import HTMLParser
 import json
+import logging
 from pathlib import Path
 import re
 import time
@@ -21,6 +22,7 @@ from .pipeline import ValidationError, atomic_write, iso, normalize_batch, read_
 
 CATALOG_URL = 'https://gcx.app/buy-gift-cards'
 MAX_BYTES = 2_000_000
+logger = logging.getLogger(__name__)
 
 
 class CatalogParser(HTMLParser):
@@ -30,6 +32,7 @@ class CatalogParser(HTMLParser):
         self.pages = {1}
         self.product = None
         self.capture = None
+        self.capture_stack = []
         self.pagination = False
 
     def handle_starttag(self, tag, attrs):
@@ -39,21 +42,30 @@ class CatalogParser(HTMLParser):
             self.pagination = True
         if tag == 'li' and 'product-source' in classes:
             if self.product is not None:
-                raise ValidationError('Unexpected nested GCX catalog product')
+                logger.warning('Skipping incomplete GCX product: %r', self.product)
             self.product = {'name': '', 'info': '', 'path': None}
+            self.capture = None
+            self.capture_stack = []
         if tag == 'a':
             href = attrs.get('href', '')
-            parsed = urlsplit(urljoin(CATALOG_URL, href))
+            try:
+                parsed = urlsplit(urljoin(CATALOG_URL, href))
+            except ValueError:
+                if self.product is not None:
+                    self.product['invalid_link'] = True
+                return
             if self.pagination and parsed.hostname == 'gcx.app' and parsed.path == '/buy-gift-cards':
                 page = parse_qs(parsed.query).get('page', ['1'])[0]
                 if page.isdigit() and len(page) <= 4 and int(page) > 0:
                     self.pages.add(int(page))
             if self.product is not None and re.fullmatch(r'/buy-[a-z0-9-]+-gift-cards', parsed.path):
                 if parsed.hostname != 'gcx.app' or parsed.query:
-                    raise ValidationError('Unexpected GCX offer link')
-                self.product['path'] = parsed.path
+                    self.product['invalid_link'] = True
+                else:
+                    self.product['path'] = parsed.path
         if tag == 'span' and self.product is not None:
-            self.capture = 'name' if 'name' in classes else 'info' if 'info' in classes else None
+            self.capture_stack.append(self.capture)
+            self.capture = 'name' if 'name' in classes else 'info' if 'info' in classes else self.capture
 
     def handle_data(self, data):
         if self.product is not None and self.capture:
@@ -61,7 +73,7 @@ class CatalogParser(HTMLParser):
 
     def handle_endtag(self, tag):
         if tag == 'span':
-            self.capture = None
+            self.capture = self.capture_stack.pop() if self.capture_stack else None
         if tag == 'ul':
             self.pagination = False
         if tag == 'li' and self.product is not None:
@@ -70,10 +82,17 @@ class CatalogParser(HTMLParser):
 
 
 def parse_catalog(html: str) -> tuple[dict, set[int]]:
+    products, pages = _parse_catalog(html)
+    return {path: row['max_discount_pct'] for path, row in products.items()}, pages
+
+
+def _parse_catalog(html: str) -> tuple[dict, set[int]]:
     parser = CatalogParser()
     parser.feed(html)
     parser.close()
-    if parser.product is not None or not parser.products:
+    if parser.product is not None:
+        logger.warning('Skipping incomplete GCX product: %r', parser.product)
+    if not parser.products and parser.product is None:
         raise ValidationError('GCX catalog is empty, incomplete, or its markup changed')
     products = {}
     for product in parser.products:
@@ -81,14 +100,21 @@ def parse_catalog(html: str) -> tuple[dict, set[int]]:
         # GCX Cash is a separate promotional reward, never added to the discount.
         match = re.fullmatch(r'Up to (\d+(?:\.\d+)?)% off(?: \| \d+(?:\.\d+)?% GCX Cash)?', info)
         cash_only = re.fullmatch(r'\d+(?:\.\d+)?% GCX Cash', info)
-        if not path or not product['name'].strip() or not (match or cash_only):
-            raise ValidationError('Unexpected GCX catalog product or discount label')
+        if (not path or product.get('invalid_link') or not product['name'].strip()
+                or not (match or cash_only)):
+            logger.warning('Skipping invalid GCX product: name=%r path=%r label=%r',
+                           product['name'], path, info)
+            continue
         discount = float(match[1]) if match else None
         if discount is not None and not 0 <= discount <= 100:
-            raise ValidationError('GCX advertised discount outside 0–100%')
+            logger.warning('Skipping GCX discount outside 0–100%%: %s %r', path, info)
+            continue
         if path in products:
-            raise ValidationError('Duplicate GCX catalog product')
-        products[path] = discount
+            logger.warning('Skipping duplicate GCX product: %s', path)
+            continue
+        products[path] = {'name': product['name'].strip(),
+                          'offer_url': 'https://gcx.app' + path,
+                          'max_discount_pct': discount}
     return products, parser.pages
 
 
@@ -137,7 +163,9 @@ def lookup_offers(config: dict, query: str, *, collect=None, **collect_kwargs) -
     by_id = {offer['retailer_id']: offer for offer in batch['offers']}
     rows = []
     for retailer in matches:
-        offer = by_id[retailer['id']]
+        offer = by_id.get(retailer['id'])
+        if offer is None:
+            continue
         rows.append({
             'retailer_id': retailer['id'],
             'name': retailer['name'],
@@ -192,28 +220,34 @@ def collect_batch(config: dict, *, max_pages: int = 20, timeout: float = 20,
             except (URLError, TimeoutError, OSError) as exc:
                 if attempt == retries:
                     raise ValidationError('GCX catalog retrieval failed') from exc
-        current, pages = parse_catalog(html)
-        if products.keys() & current.keys():
-            raise ValidationError('GCX pagination repeated a product; refusing ambiguous collection')
-        products.update(current)
+        try:
+            current, pages = _parse_catalog(html)
+        except ValidationError as exc:
+            logger.warning('Skipping GCX page %s: %s', page, exc)
+            visited.add(page)
+            continue
+        for path, product in current.items():
+            if path in products:
+                logger.warning('Skipping repeated GCX product on page %s: %s', page, path)
+                continue
+            products[path] = product
         visited.add(page)
-        if paths.keys() <= products.keys():
-            break
         # Pages are sequential, including those hidden behind an ellipsis.
         pending.update(set(range(1, min(max(pages), max_pages) + 1)) - visited)
-    missing = paths.keys() - products.keys()
-    if missing:
-        raise ValidationError('GCX did not advertise every configured retailer; snapshot preserved')
     offers = []
     for path, rid in paths.items():
-        discount = products[path]
+        discount = products.get(path, {}).get('max_discount_pct')
         if discount is None:
-            raise ValidationError(f'GCX has only rewards for {rid}; discounted inventory is unknown')
+            logger.warning('Skipping %s: no valid GCX discount collected', rid)
+            continue
         offers.append({'retailer_id': rid, 'status': 'available',
                        'offer_url': 'https://gcx.app' + path,
                        'max_discount_pct': discount,
                        'observation_kind': 'catalog_advertised'})
-    batch = {'schema_version': 1, 'provider_id': 'gcx', 'demo': False, 'complete': True,
+    if not offers:
+        raise ValidationError('GCX returned no valid configured discounts; snapshot preserved')
+    batch = {'schema_version': 1, 'provider_id': 'gcx', 'demo': False,
+             'complete': len(offers) == len(paths), 'gcx_catalog': list(products.values()),
              'run_id': 'gcx-' + uuid4().hex, 'observed_at': iso(observed_at), 'offers': offers}
     normalize_batch(config, batch, observed_at)
     return batch

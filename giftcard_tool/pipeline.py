@@ -205,8 +205,8 @@ def listing_metrics(listings: list) -> dict:
 def normalize_batch(config: dict, batch: dict, now: datetime | None = None) -> list[dict]:
     validate_config(config)
     now = now or utcnow()
-    if batch.get("schema_version") != 1 or batch.get("complete") is not True:
-        raise ValidationError("A complete, version-1 provider batch is required")
+    if batch.get("schema_version") != 1 or type(batch.get("complete")) is not bool:
+        raise ValidationError("A version-1 provider batch must explicitly declare completeness")
     if not isinstance(batch.get("demo"), bool):
         raise ValidationError("Batch must explicitly declare demo true or false")
     provider_id = batch.get("provider_id")
@@ -221,8 +221,11 @@ def normalize_batch(config: dict, batch: dict, now: datetime | None = None) -> l
         raise ValidationError("offers must be an array")
     expected = {r["id"] for r in config["retailers"]}
     received = [row.get("retailer_id") for row in offers]
-    if len(received) != len(set(received)) or set(received) != expected:
-        raise ValidationError("Batch must explicitly cover every configured retailer exactly once")
+    if (len(received) != len(set(received)) or not set(received) <= expected
+            or (batch["complete"] and set(received) != expected)):
+        raise ValidationError("Batch must cover configured retailers exactly once; complete batches must cover all")
+    if not batch["complete"] and not received:
+        raise ValidationError("A partial batch must include at least one validated retailer")
     normalized = []
     for row in offers:
         status = row.get("status")
@@ -300,7 +303,9 @@ def build_snapshot(config: dict, batch: dict, now: datetime | None = None,
                 "include_subdomains": mapping.get("include_subdomains", True),
                 "enabled": mapping.get("enabled", True),
             }
-        observation = by_id[rid]
+        observation = by_id.get(rid)
+        if observation is None:
+            continue
         expires_at = timestamp(observation["observed_at"]) + timedelta(hours=max_age_hours)
         if (observation["status"] != "available" or expires_at <= now
                 or observation["max_discount_pct"] <= 0):
@@ -310,7 +315,7 @@ def build_snapshot(config: dict, batch: dict, now: datetime | None = None,
         offer["expires_at"] = iso(expires_at)
         retailers[rid] = {"name": retailer["name"], "offers": [offer]}
     return {
-        "schema_version": 1, "demo": batch["demo"], "generated_at": iso(now),
+        "schema_version": 1, "demo": batch["demo"], "complete": batch["complete"], "generated_at": iso(now),
         "source_observed_at": iso(timestamp(batch["observed_at"])),
         "max_age_hours": max_age_hours,
         "providers": {pid: {"name": item["name"]} for pid, item in config["providers"].items()},

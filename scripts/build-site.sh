@@ -24,7 +24,15 @@ python3 - <<PY
 import json
 from pathlib import Path
 snap = json.loads(Path("$SITE/snapshot.json").read_text())
+batch = json.loads(Path("$LIVE/input.json").read_text())
+catalog = {
+    "schema_version": 1, "demo": False,
+    "observed_at": batch["observed_at"],
+    "products": batch["gcx_catalog"],
+}
+Path("$SITE/catalog.json").write_text(json.dumps(catalog, indent=2) + "\n")
 assert snap.get("demo") is False, snap.get("demo")
 offers = sum(1 for r in snap["retailers"].values() if r.get("offers"))
 print(f"site ready: {offers} retailers with offers @ {snap.get('generated_at')}")
+print(f"GCX catalog: {len(catalog['products'])} validated products")
 PY

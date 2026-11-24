@@ -63,7 +63,7 @@ def test_expiry_does_not_depend_on_generation_time(config, batch):
 
 
 @pytest.mark.parametrize('change', [
-    lambda b: b.update(complete=False),
+    lambda b: b.update(complete=None),
     lambda b: b['offers'].pop(),
     lambda b: b['offers'].append(deepcopy(b['offers'][0])),
     lambda b: b['offers'][0].update(status='unknown'),
@@ -138,7 +138,7 @@ def test_idempotent_import(tmp_path, config, batch):
 
 def test_invalid_batch_preserves_snapshot_and_history(tmp_path, config, batch):
     args = write_inputs(tmp_path, config, batch); run_pipeline(*args, now=NOW)
-    before = args[2].read_bytes(); batch['complete'] = False; args[1].write_text(json.dumps(batch))
+    before = args[2].read_bytes(); batch['offers'].pop(); args[1].write_text(json.dumps(batch))
     with pytest.raises(ValidationError): run_pipeline(*args, now=NOW)
     assert args[2].read_bytes() == before
     with sqlite3.connect(args[3]) as db:
@@ -179,3 +179,40 @@ def test_demo_cannot_replace_production(tmp_path, config, batch):
     args = write_inputs(tmp_path, config, batch); run_pipeline(*args, now=NOW)
     batch['demo'] = False; args[1].write_text(json.dumps(batch))
     with pytest.raises(ValidationError, match='separate'): run_pipeline(*args, now=NOW)
+
+
+def test_partial_batch_publishes_valid_offers_without_fabricating_missing_inventory(config, batch):
+    batch['complete'] = False
+    batch['offers'] = batch['offers'][:1]
+    snapshot, rows = build_snapshot(config, batch, NOW)
+    assert snapshot['complete'] is False
+    assert set(snapshot['retailers']) == {'dominos'}
+    assert [row['retailer_id'] for row in rows] == ['dominos']
+    assert rows[0]['status'] == 'available'
+    assert set(snapshot['domains']) == {domain['host'] for retailer in config['retailers']
+                                       for domain in retailer['domains']}
+
+
+@pytest.mark.parametrize('change', [
+    lambda b: b.update(offers=[]),
+    lambda b: b['offers'].append(deepcopy(b['offers'][0])),
+    lambda b: b['offers'][0].update(retailer_id='unconfigured'),
+    lambda b: b['offers'][0].update(status='unknown'),
+    lambda b: b['offers'][0].update(offer_url='https://evil.example/offer'),
+])
+def test_partial_batch_still_rejects_empty_or_invalid_offers(config, batch, change):
+    batch['complete'] = False
+    batch['offers'] = batch['offers'][:1]
+    change(batch)
+    with pytest.raises(ValidationError):
+        normalize_batch(config, batch, NOW)
+
+
+def test_partial_import_records_only_successful_observations(tmp_path, config, batch):
+    batch['complete'] = False
+    batch['offers'] = batch['offers'][:1]
+    args = write_inputs(tmp_path, config, batch)
+    assert run_pipeline(*args, now=NOW)['observations_inserted'] == 1
+    assert read_json(args[2])['complete'] is False
+    with sqlite3.connect(args[3]) as db:
+        assert db.execute('select retailer from observations').fetchall() == [('dominos',)]

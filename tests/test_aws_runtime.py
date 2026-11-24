@@ -100,8 +100,8 @@ class CloudPipelineTests(unittest.TestCase):
         self.assertEqual(before["retailers"], after["retailers"])
         self.assertEqual(before["source_observed_at"], after["source_observed_at"])
 
-    def test_demo_partial_and_stale_never_touch_history_or_snapshot(self):
-        for change in ({"demo": True}, {"complete": False},
+    def test_demo_empty_partial_and_stale_never_touch_history_or_snapshot(self):
+        for change in ({"demo": True}, {"complete": False, "offers": []},
                        {"observed_at": "2026-10-20T11:00:00Z"}):
             with self.subTest(change=change):
                 candidate = {**self.batch, **change}
@@ -109,6 +109,20 @@ class CloudPipelineTests(unittest.TestCase):
                     self.run_batch(candidate)
                 self.assertEqual(self.db.items, {})
                 self.assertIsNone(self.s3.body)
+
+    def test_partial_batch_publishes_valid_subset_without_missing_inventory_records(self):
+        partial = {**self.batch, "complete": False, "offers": self.batch["offers"][:1]}
+        result = self.run_batch(partial)
+        self.assertEqual(result["observations_inserted"], 1)
+        snapshot = json.loads(self.s3.body)
+        self.assertFalse(snapshot["complete"])
+        self.assertEqual(set(snapshot["retailers"]), {"dominos"})
+        current = [json.loads(row["payload"]["S"]) for key, row in self.db.items.items()
+                   if key[1] == "CURRENT"]
+        self.assertEqual([row["retailer_id"] for row in current], ["dominos"])
+        self.assertEqual(current[0]["status"], "available")
+        observation_keys = [key for key in self.db.items if key[0].startswith("OFFER#")]
+        self.assertTrue(all(key[0] == "OFFER#gcx#dominos" for key in observation_keys))
 
     def test_verified_empty_batch_clears_offers(self):
         self.run_batch()
